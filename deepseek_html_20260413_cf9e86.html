@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRM - Động cơ từ trở (Hiển thị góc lũy tiến, không reset)</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body {
+            background: linear-gradient(145deg, #e0e7f0 0%, #cbd5e1 100%);
+            font-family: 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            width: 100%;
+            background: rgba(255,255,255,0.4);
+            border-radius: 2rem;
+            padding: 1.5rem;
+        }
+        .panel {
+            background: #1e2a32;
+            border-radius: 2rem;
+            padding: 1.5rem;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: #fef9e8;
+            border-radius: 1.5rem;
+            box-shadow: 0 0 0 4px #ffd966, 0 8px 20px black;
+            width: 100%;
+            height: auto;
+        }
+        .buttons {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px;
+            margin: 20px 0 12px;
+        }
+        button {
+            font-size: 1.2rem;
+            font-weight: bold;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 40px;
+            cursor: pointer;
+            font-family: monospace;
+            box-shadow: 0 4px 0 #0f1a0f;
+            transition: 0.05s linear;
+        }
+        button:active { transform: translateY(2px); box-shadow: 0 1px 0 #0f1a0f; }
+        .phase { background: #2c3e2f; color: white; }
+        .phase.active { background: #f39c12; color: #1e2a32; box-shadow: 0 0 12px #ffb347; transform: translateY(-2px); }
+        .auto { background: #2c5f6e; color: white; }
+        .auto.running { background: #e67e22; box-shadow: 0 0 12px #ffaa33; }
+        .stop { background: #7f8c8d; color: white; }
+        .speed-box {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            background: #0f2c2ccc;
+            padding: 8px 18px;
+            border-radius: 40px;
+            width: fit-content;
+            margin: 0 auto 10px;
+            color: white;
+        }
+        input { width: 180px; }
+        .info {
+            background: #ffffffdd;
+            border-radius: 1.2rem;
+            padding: 10px 18px;
+            margin-top: 18px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 10px;
+            font-weight: 500;
+        }
+        .theory { background: #0f2c2c; color: #d9ffd9; border-radius: 1rem; padding: 6px 15px; font-size: 0.85rem; }
+        .status { background: #1e2a32; color: #ffd966; padding: 5px 15px; border-radius: 2rem; font-weight: bold; }
+        .angle-display { background: #000000aa; color: #ffd966; padding: 4px 12px; border-radius: 2rem; font-family: monospace; font-weight: bold; }
+        .note { font-size: 0.7rem; color: #ffcc88; margin-left: 10px; }
+        footer { text-align: center; font-size: 0.7rem; margin-top: 12px; color: #1e2a32; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="panel">
+        <canvas id="motorCanvas" width="700" height="500"></canvas>
+
+        <div class="buttons">
+            <button class="phase" id="btnA">⚡ PHA A</button>
+            <button class="phase" id="btnB">⚡ PHA B</button>
+            <button class="phase" id="btnC">⚡ PHA C</button>
+            <button class="auto" id="btnAuto">▶ QUAY LIÊN TỤC</button>
+            <button class="stop" id="btnStop">⏹ DỪNG</button>
+        </div>
+
+        <div class="speed-box">
+            <span>🐢 Tốc độ (ms/bước):</span>
+            <input type="range" id="speedSlider" min="200" max="1200" value="600" step="50">
+            <span id="speedVal">600</span> <span>🐇</span>
+            <span class="angle-display" id="angleDisplay">Góc: 0°</span>
+            <span class="note">(góc lũy tiến, không reset)</span>
+        </div>
+
+        <div class="info">
+            <div class="theory">🧲 <strong>Nguyên lý:</strong> Cấp điện luân phiên A→B→C→A→... rotor quay một chiều liên tục, mỗi bước +30°.</div>
+            <div class="status" id="statusText">⏸ DỪNG</div>
+            <div class="theory">⚙️ Rotor: <u>không dây quấn</u> | <u>không nam châm</u> | chỉ thép lá</div>
+        </div>
+    </div>
+    <footer>
+        🔁 <strong>Giải thích:</strong> Góc hiển thị là góc lũy tiến (30°, 60°, 90°, ..., 360°, 390°, 420°...). 
+        Khi qua 360°, rotor đã quay hết 1 vòng và bắt đầu vòng mới. <strong>Không có sự quay ngược nào cả.</strong>
+    </footer>
+</div>
+
+<script>
+    (function(){
+        // --- THÔNG SỐ ---
+        let cumulativeAngle = 0;       // góc lũy tiến (có thể >360)
+        let activePhase = null;        // 'A', 'B', 'C'
+        let autoTimer = null;
+        let isAuto = false;
+        
+        const phaseOrder = ['A', 'B', 'C'];
+        let nextPhaseIndex = 0;
+        const ANGLE_STEP = 30;
+        
+        // DOM
+        const canvas = document.getElementById('motorCanvas');
+        const ctx = canvas.getContext('2d');
+        const btnA = document.getElementById('btnA');
+        const btnB = document.getElementById('btnB');
+        const btnC = document.getElementById('btnC');
+        const btnAuto = document.getElementById('btnAuto');
+        const btnStop = document.getElementById('btnStop');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedVal = document.getElementById('speedVal');
+        const statusSpan = document.getElementById('statusText');
+        const angleDisplay = document.getElementById('angleDisplay');
+        
+        let w, h, cx, cy, statorR, rotorR;
+        let isAnimating = false;
+        let animFrame = null;
+        
+        // Lấy góc hiển thị trên canvas (0-360) để vẽ rotor
+        function getDisplayAngle() {
+            return cumulativeAngle % 360;
+        }
+        
+        // --- Vẽ ---
+        function drawStator() {
+            for(let i=0;i<6;i++){
+                let deg = i * 60;
+                let rad = deg * Math.PI/180;
+                let isActive = false;
+                if(activePhase === 'A' && (deg===0 || deg===180)) isActive = true;
+                if(activePhase === 'B' && (deg===60 || deg===240)) isActive = true;
+                if(activePhase === 'C' && (deg===120 || deg===300)) isActive = true;
+                
+                let startX = cx + statorR * Math.cos(rad);
+                let startY = cy + statorR * Math.sin(rad);
+                let poleLen = statorR * 0.28;
+                let poleW = statorR * 0.22;
+                let tipX = cx + (statorR + poleLen) * Math.cos(rad);
+                let tipY = cy + (statorR + poleLen) * Math.sin(rad);
+                let perp = rad + Math.PI/2;
+                let halfW = poleW/2;
+                let p1x = startX + halfW * Math.cos(perp);
+                let p1y = startY + halfW * Math.sin(perp);
+                let p2x = startX - halfW * Math.cos(perp);
+                let p2y = startY - halfW * Math.sin(perp);
+                let p3x = tipX - halfW*0.7 * Math.cos(perp);
+                let p3y = tipY - halfW*0.7 * Math.sin(perp);
+                let p4x = tipX + halfW*0.7 * Math.cos(perp);
+                let p4y = tipY + halfW*0.7 * Math.sin(perp);
+                
+                ctx.beginPath();
+                ctx.moveTo(p1x,p1y);
+                ctx.lineTo(p2x,p2y);
+                ctx.lineTo(p3x,p3y);
+                ctx.lineTo(p4x,p4y);
+                ctx.fillStyle = isActive ? '#f39c12' : '#4b6a7c';
+                ctx.fill();
+                ctx.strokeStyle = '#1e2a32';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(startX + (tipX-startX)*0.4, startY + (tipY-startY)*0.4, poleW*0.4, 0, 2*Math.PI);
+                ctx.fillStyle = isActive ? '#f7d44a' : '#6c8b9b';
+                ctx.fill();
+            }
+            ctx.beginPath();
+            ctx.arc(cx, cy, statorR, 0, 2*Math.PI);
+            ctx.strokeStyle = '#1e2a32';
+            ctx.lineWidth = 2.2;
+            ctx.stroke();
+        }
+        
+        function drawRotor(displayAngleDeg) {
+            let radOff = displayAngleDeg * Math.PI/180;
+            let coreR = rotorR * 0.75;
+            ctx.beginPath();
+            ctx.arc(cx, cy, coreR, 0, 2*Math.PI);
+            ctx.fillStyle = '#4a5568';
+            ctx.fill();
+            ctx.fillStyle = '#a0aec0';
+            ctx.beginPath();
+            ctx.arc(cx, cy, coreR-3, 0, 2*Math.PI);
+            ctx.fill();
+            
+            for(let i=0;i<4;i++){
+                let poleRad = radOff + i * Math.PI/2;
+                let baseX = cx + coreR * Math.cos(poleRad);
+                let baseY = cy + coreR * Math.sin(poleRad);
+                let tipX = cx + rotorR * Math.cos(poleRad);
+                let tipY = cy + rotorR * Math.sin(poleRad);
+                let wPole = rotorR * 0.23;
+                let perp = poleRad + Math.PI/2;
+                let dx = wPole/2 * Math.cos(perp);
+                let dy = wPole/2 * Math.sin(perp);
+                ctx.beginPath();
+                ctx.moveTo(baseX+dx, baseY+dy);
+                ctx.lineTo(baseX-dx, baseY-dy);
+                ctx.lineTo(tipX-dx*0.8, tipY-dy*0.8);
+                ctx.lineTo(tipX+dx*0.8, tipY+dy*0.8);
+                ctx.fillStyle = '#718096';
+                ctx.fill();
+                ctx.strokeStyle = '#2d3748';
+                ctx.stroke();
+            }
+            ctx.beginPath();
+            ctx.arc(cx, cy, 7, 0, 2*Math.PI);
+            ctx.fillStyle = '#cbd5e0';
+            ctx.fill();
+        }
+        
+        function drawArrows() {
+            if(!activePhase) return;
+            let a1,a2;
+            if(activePhase==='A') { a1=0; a2=180; }
+            else if(activePhase==='B') { a1=60; a2=240; }
+            else { a1=120; a2=300; }
+            let rad1 = a1*Math.PI/180, rad2 = a2*Math.PI/180;
+            let start1 = {x: cx + (statorR+15)*Math.cos(rad1), y: cy + (statorR+15)*Math.sin(rad1)};
+            let end1   = {x: cx + (statorR-8)*Math.cos(rad1), y: cy + (statorR-8)*Math.sin(rad1)};
+            let start2 = {x: cx + (statorR+15)*Math.cos(rad2), y: cy + (statorR+15)*Math.sin(rad2)};
+            let end2   = {x: cx + (statorR-8)*Math.cos(rad2), y: cy + (statorR-8)*Math.sin(rad2)};
+            
+            ctx.beginPath();
+            ctx.moveTo(start1.x, start1.y);
+            ctx.lineTo(end1.x, end1.y);
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#e67e22';
+            ctx.stroke();
+            drawArrow(end1.x, end1.y, start1.x, start1.y);
+            
+            ctx.beginPath();
+            ctx.moveTo(start2.x, start2.y);
+            ctx.lineTo(end2.x, end2.y);
+            ctx.stroke();
+            drawArrow(end2.x, end2.y, start2.x, start2.y);
+        }
+        
+        function drawArrow(fx,fy,tx,ty){
+            let ang = Math.atan2(ty-fy, tx-fx);
+            let size = 8;
+            let x1 = fx + size * Math.cos(ang + Math.PI/6);
+            let y1 = fy + size * Math.sin(ang + Math.PI/6);
+            let x2 = fx + size * Math.cos(ang - Math.PI/6);
+            let y2 = fy + size * Math.sin(ang - Math.PI/6);
+            ctx.beginPath();
+            ctx.moveTo(fx,fy);
+            ctx.lineTo(x1,y1);
+            ctx.lineTo(x2,y2);
+            ctx.fillStyle = '#e67e22';
+            ctx.fill();
+        }
+        
+        function drawLabels() {
+            ctx.font = "bold 13px 'Segoe UI'";
+            ctx.fillStyle = "#1f2d3a";
+            ctx.fillText("STATOR (6 cực lồi)", cx-90, cy-statorR-10);
+            ctx.fillStyle = "#2d3748";
+            ctx.fillText("ROTOR (4 cực lồi)", cx-70, cy+rotorR+18);
+            if(activePhase){
+                ctx.font = "bold 15px monospace";
+                ctx.fillStyle = "#e67e22";
+                ctx.fillText(`⚡ PHA ${activePhase} CÓ ĐIỆN`, cx-110, cy-statorR-30);
+            }
+            // Vẽ thêm vạch đánh dấu 0°
+            ctx.beginPath();
+            ctx.moveTo(cx, cy-statorR-15);
+            ctx.lineTo(cx, cy-statorR-5);
+            ctx.strokeStyle = "#ff6666";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.fillStyle = "#ff6666";
+            ctx.font = "10px monospace";
+            ctx.fillText("0°", cx-8, cy-statorR-8);
+        }
+        
+        function redraw() {
+            ctx.clearRect(0,0,w,h);
+            drawStator();
+            drawRotor(getDisplayAngle());
+            if(activePhase) drawArrows();
+            drawLabels();
+            // Hiển thị góc lũy tiến (không reset)
+            angleDisplay.innerText = `Góc: ${Math.round(cumulativeAngle)}°`;
+        }
+        
+        // --- Chuyển động quay mượt ---
+        function rotateTo(targetCumulativeAngle, callback) {
+            if(animFrame) cancelAnimationFrame(animFrame);
+            let startAng = cumulativeAngle;
+            let startTime = null;
+            let duration = 250;
+            function step(now) {
+                if(!startTime) startTime = now;
+                let t = Math.min(1, (now-startTime)/duration);
+                let ease = 1 - Math.pow(1-t, 3);
+                let newAng = startAng + (targetCumulativeAngle - startAng) * ease;
+                cumulativeAngle = newAng;
+                redraw();
+                if(t < 1) {
+                    animFrame = requestAnimationFrame(step);
+                } else {
+                    cumulativeAngle = targetCumulativeAngle;
+                    redraw();
+                    animFrame = null;
+                    if(callback) callback();
+                }
+            }
+            animFrame = requestAnimationFrame(step);
+        }
+        
+        // --- Kích hoạt pha (quay tới góc mới, tăng thêm ANGLE_STEP) ---
+        function activatePhase(phase) {
+            if(isAnimating) return false;
+            activePhase = phase;
+            let newCumulativeAngle = cumulativeAngle + ANGLE_STEP;
+            rotateTo(newCumulativeAngle, () => {});
+            updateButtonStyle();
+            return true;
+        }
+        
+        // --- Chạy tự động ---
+        function stopAuto() {
+            if(autoTimer) {
+                clearInterval(autoTimer);
+                autoTimer = null;
+            }
+            isAuto = false;
+            btnAuto.classList.remove('running');
+            btnAuto.innerHTML = '▶ QUAY LIÊN TỤC';
+            statusSpan.innerHTML = '⏸ DỪNG';
+        }
+        
+        function startAuto() {
+            if(autoTimer) stopAuto();
+            isAuto = true;
+            btnAuto.classList.add('running');
+            btnAuto.innerHTML = '⏵ ĐANG QUAY';
+            statusSpan.innerHTML = '🔁 ĐANG QUAY MỘT CHIỀU (A→B→C→A→B→C...)';
+            
+            // Xác định pha tiếp theo dựa trên góc lũy tiến
+            let stepMod = Math.round((cumulativeAngle / ANGLE_STEP)) % 3;
+            if(stepMod < 0) stepMod += 3;
+            nextPhaseIndex = stepMod;
+            
+            function nextStep() {
+                if(!isAuto) return;
+                let phase = phaseOrder[nextPhaseIndex];
+                activatePhase(phase);
+                nextPhaseIndex = (nextPhaseIndex + 1) % 3;
+            }
+            
+            let speed = parseInt(speedSlider.value);
+            autoTimer = setInterval(nextStep, speed);
+        }
+        
+        function updateButtonStyle() {
+            [btnA, btnB, btnC].forEach(btn => btn.classList.remove('active'));
+            if(activePhase === 'A') btnA.classList.add('active');
+            if(activePhase === 'B') btnB.classList.add('active');
+            if(activePhase === 'C') btnC.classList.add('active');
+        }
+        
+        // --- Xử lý sự kiện ---
+        function handleManualPhase(phase) {
+            if(isAnimating) return;
+            stopAuto();
+            activatePhase(phase);
+        }
+        
+        btnA.onclick = () => handleManualPhase('A');
+        btnB.onclick = () => handleManualPhase('B');
+        btnC.onclick = () => handleManualPhase('C');
+        btnAuto.onclick = () => {
+            if(isAuto) stopAuto();
+            else startAuto();
+        };
+        btnStop.onclick = () => {
+            stopAuto();
+            if(isAnimating) return;
+            activePhase = null;
+            updateButtonStyle();
+            redraw();
+            statusSpan.innerHTML = '⏸ DỪNG';
+        };
+        
+        speedSlider.oninput = () => {
+            speedVal.innerText = speedSlider.value;
+            if(isAuto) {
+                let wasAuto = isAuto;
+                if(wasAuto) {
+                    startAuto();
+                }
+            }
+        };
+        
+        function resizeCanvas() {
+            canvas.width = 700;
+            canvas.height = 500;
+            w = canvas.width;
+            h = canvas.height;
+            cx = w/2;
+            cy = h/2;
+            statorR = Math.min(w,h)*0.38;
+            rotorR = statorR * 0.68;
+            redraw();
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        cumulativeAngle = 0;
+        activePhase = null;
+        redraw();
+        updateButtonStyle();
+    })();
+</script>
+</body>
+</html>
